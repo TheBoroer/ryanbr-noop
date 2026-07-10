@@ -13,7 +13,9 @@
 # you resolve the merge locally (git fetch upstream && git merge <tag> on dev).
 #
 # NOTES:
-#   - Scheduled workflows only run from the default branch, so this file must live on `main`.
+#   - Scheduled workflows only run from the default branch. This fork's default branch is
+#     `dev` (changed on purpose), so this file lives ONLY on dev — `main` stays byte-identical
+#     to upstream, and PR branches cut from main/upstream never include it.
 #   - GitHub auto-disables cron workflows after 60 days without repo activity; re-enable in
 #     the Actions tab if that happens.
 name: Upstream release sync (fork)
