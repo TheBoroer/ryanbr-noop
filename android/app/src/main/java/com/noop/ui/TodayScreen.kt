@@ -4291,10 +4291,16 @@ private fun LiquidKeyTile(data: KeyTileData, modifier: Modifier = Modifier) {
 // "my-whoop"; Apple Health and Health Connect imports are stored under their own device ids (since
 // #34/#53). Both the "Last Workouts" feed and the HR-graph sport glyphs need the SAME union, or
 // Health-Connect-imported sessions get no glyph on the Today trend, so they share this one seam.
+// Deduped here (not per-consumer) with the Workouts screen's #687 semantics: a live strap recording
+// and its thin Health Connect import collapse to the richer row, so neither the feed shows a
+// duplicate card nor the HR trend a doubled sport glyph. dropDetectedShadows/filterDismissed are
+// deliberately absent: `detected` rows live under `<deviceId>-noop`, which this union never queries.
 private suspend fun WhoopRepository.workoutsAllSources(from: Long, to: Long): List<WorkoutRow> =
-    workouts("my-whoop", from, to) +
-        workouts("apple-health", from, to) +
-        workouts("health-connect", from, to)
+    WorkoutEditing.dedupCrossSource(
+        workouts("my-whoop", from, to) +
+            workouts("apple-health", from, to) +
+            workouts("health-connect", from, to)
+    )
 
 // MARK: - Heart-rate trend (today's continuous HR off the strap's own ~1Hz history)
 //
@@ -5048,6 +5054,14 @@ data class TodayFooterState(
     val hcDays: Int? = null,
     val hcWorkouts: Int? = null,
 )
+
+// The Today "Last Workouts" contract, pure and unit-locked (LastWorkoutsFeedTest): cross-source
+// dedup (#687), newest first, at most four. The seam already dedups, so the dedup here is an
+// idempotent guard that keeps the contract honest for any future caller feeding a raw union.
+internal fun lastWorkoutsFeed(rows: List<WorkoutRow>): List<WorkoutRow> =
+    WorkoutEditing.dedupCrossSource(rows)
+        .sortedByDescending { it.startTs }
+        .take(4)
 
 @Composable
 private fun TodayWorkoutsSection(workouts: List<WorkoutRow>) {
