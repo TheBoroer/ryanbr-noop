@@ -5065,28 +5065,24 @@ internal fun lastWorkoutsFeed(rows: List<WorkoutRow>): List<WorkoutRow> =
 
 @Composable
 private fun TodayWorkoutsSection(workouts: List<WorkoutRow>) {
-    if (workouts.isEmpty()) return
+    // Single column, newest first: the 2x2 grid truncated durations on narrow phones and read as
+    // unrelated stat tiles rather than a chronological feed. Full-width tiles have room for the
+    // kcal chip, so the #332 compactDelta workaround is no longer needed here.
+    val feed = lastWorkoutsFeed(workouts)
+    if (feed.isEmpty()) return
 
     SectionHeader("Last Workouts", overline = "Activity", trailing = "14 days")
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-        workouts.take(4).chunked(2).forEach { rowWorkouts ->
-            Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-                rowWorkouts.forEach { workout ->
-                    StatTile(
-                        modifier = Modifier.weight(1f),
-                        label = WorkoutEditing.displaySport(workout.sport),
-                        value = workoutDuration(workout),
-                        caption = workoutCaption(workout),
-                        accent = workout.strain?.let { Palette.effortTint(it / StrainScorer.maxStrain) } ?: Palette.textPrimary,
-                        delta = workout.energyKcal?.let { "${it.roundToInt()} kcal" },
-                        deltaColor = Palette.metricAmber,
-                        // Keep the duration value readable beside the kcal chip on narrow phones, the
-                        // chip yields width instead of starving the value down to "4…"/"2…" (#332).
-                        compactDelta = true,
-                    )
-                }
-                if (rowWorkouts.size == 1) Spacer(Modifier.weight(1f))
-            }
+        feed.forEach { workout ->
+            StatTile(
+                modifier = Modifier.fillMaxWidth(),
+                label = WorkoutEditing.displaySport(workout.sport),
+                value = workoutDuration(workout),
+                caption = workoutCaption(workout),
+                accent = workout.strain?.let { Palette.effortTint(it / StrainScorer.maxStrain) } ?: Palette.textPrimary,
+                delta = workout.energyKcal?.let { "${it.roundToInt()} kcal" },
+                deltaColor = Palette.metricAmber,
+            )
         }
     }
 }
