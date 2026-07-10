@@ -3267,6 +3267,29 @@ internal fun displaySmoothed(
     return ivs
 }
 
+/** Canonical stage key: trims, lowercases, and folds the "wake"/"awake" alias (stageColorFor parity). */
+internal fun canonicalStage(name: String): String {
+    val n = name.trim().lowercase()
+    return if (n == "wake") "awake" else n
+}
+
+/**
+ * The (startFraction, widthFraction) spans of [rowStage]'s intervals within the night — one entry
+ * per solid segment in that stage's timeline row track. Fractions of [spanSec]; the draw side
+ * applies the min-width floor and canvas clamping.
+ */
+internal fun stageRowSpans(
+    intervals: List<StageInterval>,
+    rowStage: String,
+    spanSec: Double,
+): List<Pair<Float, Float>> {
+    if (spanSec <= 0.0 || !spanSec.isFinite()) return emptyList()
+    val key = canonicalStage(rowStage)
+    return intervals
+        .filter { canonicalStage(it.stage) == key }
+        .map { iv -> (iv.startSec / spanSec).toFloat() to (iv.durationSec / spanSec).toFloat() }
+}
+
 // MARK: - Hours vs Needed card
 
 /**
