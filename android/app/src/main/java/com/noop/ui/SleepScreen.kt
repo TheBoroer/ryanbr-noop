@@ -814,50 +814,53 @@ private fun Hero(
             // so the subtitle tracks the edit even before the stage minutes are recomputed. Uses the
             // EFFECTIVE onset so a hand-edited bedtime is reflected. (#160 / PR #395)
             val inBedMin = session?.let { (it.endTs - it.effectiveStartTs) / 60.0 } ?: s.total
-            ChartCard(
-                title = "Stage breakdown",
-                subtitle = "${durationText(inBedMin)} in bed · ${display.efficiencyText} efficiency" +
-                    (if (display.realSegments != null) " · approx. stages (on-device)" else ""),
-                trailing = durationText(s.asleep),
-                tint = Palette.restColor,
-                footer = {
-                    // WHOOP-style stage rows in the NOOP pip language: swatch + UPPERCASE stage +
-                    // coloured % + a segmented PipBar of the share-of-night + right-aligned duration.
-                    // Same minutes/percentages the old "label · value" footer carried — no new numbers.
-                    // Mirrors the macOS SleepView.stageBreakdownRows. (PipBar)
-                    StageBreakdownRows(s)
-                },
-            ) {
-                // True per-epoch segments when the stager persisted them; else the reconstructed
-                // architecture: light → deep → light → rem → light → awake.
-                val segments = display.realSegments ?: stageSegments(s)
-                if (segments.isNotEmpty()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        // Hero strip with the band-min-thickness floor (so a short Awake reads as a
-                        // bar, not a tick) + an onset · midpoint · wake time axis when the session
-                        // gives clock times. Mirrors the Swift Hypnogram(showsTimeAxis:).
+            val subtitle = "${durationText(inBedMin)} in bed · ${display.efficiencyText} efficiency" +
+                (if (display.realSegments != null) " · approx. stages (on-device)" else "")
+            // iOS #988 port: true per-epoch segments (≥ 2 — a single run has no transitions to lay
+            // out) get the per-stage timeline rows; the rows ARE the legend, so no footer. Anything
+            // else keeps the honest proportional strip + StageBreakdownRows footer.
+            val real = display.realSegments?.takeIf { it.size >= 2 }
+            if (real != null) {
+                ChartCard(
+                    title = "Stage breakdown",
+                    subtitle = subtitle,
+                    trailing = durationText(s.asleep),
+                    tint = Palette.restColor,
+                    footer = {},
+                ) {
+                    StageTimeline(
+                        realSegments = real,
+                        s = s,
+                        onsetTs = session?.effectiveStartTs,
+                        wakeTs = session?.endTs,
+                        motionEpochs = motionEpochs,
+                    )
+                }
+            } else {
+                ChartCard(
+                    title = "Stage breakdown",
+                    subtitle = subtitle,
+                    trailing = durationText(s.asleep),
+                    tint = Palette.restColor,
+                    footer = { StageBreakdownRows(s) },
+                ) {
+                    // Reconstructed architecture (light → deep → light → rem → light → awake) as the
+                    // flat proportional strip. No MotionStrip and no fake steps here: invented
+                    // architecture has no genuine timeline to anchor to (mirrors the iOS else-branch).
+                    val segments = stageSegments(s)
+                    if (segments.isNotEmpty()) {
                         HypnogramWithAxis(
                             stages = segments,
                             onsetTs = session?.effectiveStartTs,
                             wakeTs = session?.endTs,
                         )
-                        // #407 — subordinate movement/restlessness trace UNDER the hypnogram, on the SAME
-                        // timeline, for the SAME main-night GROUP blocks the hero resolved (selectNight's
-                        // group). Honest empty state when no fragment has persisted motion (older rows).
-                        MotionStrip(motionEpochs)
-                        Row(horizontalArrangement = Arrangement.spacedBy(Metrics.space16)) {
-                            StageLegend("Deep", Palette.sleepDeep)
-                            StageLegend("Light", Palette.sleepLight)
-                            StageLegend("REM", Palette.sleepREM)
-                            StageLegend("Awake", Palette.sleepAwake)
-                        }
+                    } else {
+                        Text(
+                            "No stage breakdown for this night.",
+                            style = NoopType.subhead,
+                            color = Palette.textTertiary,
+                        )
                     }
-                } else {
-                    Text(
-                        "No stage breakdown for this night.",
-                        style = NoopType.subhead,
-                        color = Palette.textTertiary,
-                    )
                 }
             }
         }
@@ -2094,23 +2097,6 @@ private fun NightNavHeader(
                 }
             },
         )
-    }
-}
-
-@Composable
-private fun StageLegend(label: String, color: Color) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(Metrics.space6),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .height(Metrics.legendSwatch)
-                .width(Metrics.legendSwatch)
-                .clip(RoundedCornerShape(Metrics.cornerXs))
-                .background(color),
-        )
-        Text(label, style = NoopType.footnote, color = Palette.textTertiary)
     }
 }
 
