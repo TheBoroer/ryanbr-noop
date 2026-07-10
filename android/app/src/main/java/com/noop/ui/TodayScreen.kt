@@ -105,11 +105,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import android.app.DatePickerDialog
 import android.view.HapticFeedbackConstants
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.noop.R
 import com.noop.analytics.BaselineState
 import com.noop.analytics.Baselines
 import com.noop.analytics.BatteryEstimator
@@ -881,18 +883,27 @@ fun TodayScreen(
         // Health-Connect row across ALL history. A bare Today re-mount (tab-away + return, or an Apple-Health
         // import that recreates the screen) re-fires this LaunchedEffect with the screen's `remember` state
         // reset, so it re-ran the full pass for byte-identical data every time: the lag users see returning
-        // to Today after an import. `days` is a `data class` list, so its structural hashCode is a stable
-        // content signature; if we already loaded the footer for THIS signature, the data on screen is correct
-        // and we skip. The marker lives on the long-lived ViewModel, so it survives the re-mount that reset the
-        // screen state. A real data change bumps the signature and re-runs, so no real update is dropped.
-        val sig = days.hashCode()
-        if (viewModel.todayFooterLoadedSig == sig) return@LaunchedEffect
+        // to Today after an import. The signature is `days` (a `data class` list, so its structural
+        // hashCode is a stable content signature) PLUS the 14-day cross-source workout union: `days`
+        // alone missed workouts imported without touching the Whoop day summaries (e.g. a Health
+        // Connect session recorded today), so the "Last Workouts" feed stayed stale until the next
+        // Whoop cycle bumped `days`. The union is a cheap windowed SELECT; only the heavy strap-HR
+        // derivation and all-history counts below are skipped on a signature match. The marker lives
+        // on the long-lived ViewModel, so it survives the re-mount that reset the screen state. A real
+        // data change bumps the signature and re-runs, so no real update is dropped.
         val now = System.currentTimeMillis() / 1000
         val recentCutoff = LocalDate.now()
             .minusDays(13)
             .atStartOfDay(ZoneId.systemDefault())
             .toEpochSecond()
-        val whoopWorkouts = viewModel.repo.workouts("my-whoop", 0L, now)
+        val recentUnion = viewModel.repo.workoutsAllSources(viewModel.deviceId, recentCutoff, now)
+            .sortedByDescending { it.startTs }
+        val sig = 31 * days.hashCode() + recentUnion.hashCode()
+        if (viewModel.todayFooterLoadedSig == sig) return@LaunchedEffect
+        // Union of the active strap id + legacy "my-whoop" (#814), NOT the literal id alone: after a
+        // re-pair the fresh recordings live under "whoop-<id>", and a pinned read undercounted them
+        // in the Whoop pill exactly like the feed dropped them from "Latest Workouts".
+        val whoopWorkouts = viewModel.repo.workoutsUnion(viewModel.deviceId, 0L, now)
         // Apple Health and Health Connect are separate sources (since #34), keep them separate in the
         // provenance footer too, so Health Connect data isn't mislabelled under the "Apple Health" pill
         // (issue #53). The recent-workouts list below still unions all sources for a combined feed.
@@ -902,10 +913,7 @@ fun TodayScreen(
         val hcDaysCount = viewModel.repo.appleDaily("health-connect", "0000-01-01", "9999-12-31").size
         footer = TodayFooterState(
             // fillWorkoutHrFromStrap: imported sessions carry no HR, derive it from strap samples (#77).
-            recentWorkouts = viewModel.repo.fillWorkoutHrFromStrap(
-                viewModel.repo.workoutsAllSources(recentCutoff, now)
-                    .sortedByDescending { it.startTs }
-            ),
+            recentWorkouts = viewModel.repo.fillWorkoutHrFromStrap(recentUnion),
             whoopDays = days.size,
             whoopWorkouts = whoopWorkouts.size,
             appleDays = appleDaysCount,
@@ -4288,16 +4296,24 @@ private fun LiquidKeyTile(data: KeyTileData, modifier: Modifier = Modifier) {
 }
 
 // Workouts across every recorded + imported source over [from, to]. Recorded sessions live under
-// "my-whoop"; Apple Health and Health Connect imports are stored under their own device ids (since
-// #34/#53). Both the "Last Workouts" feed and the HR-graph sport glyphs need the SAME union, or
-// Health-Connect-imported sessions get no glyph on the Today trend, so they share this one seam.
+// the ACTIVE strap id — "whoop-<id>" after a re-pair — unioned with the canonical legacy "my-whoop"
+// via [WhoopRepository.workoutsUnion] (#814): this read was pinned to the literal "my-whoop", which
+// stranded a re-paired strap's fresh recordings, so the "Latest Workouts" feed and the HR-graph
+// glyphs silently dropped the newest sessions while the Workouts screen (already on the union, #28)
+// still showed them. Apple Health and Health Connect imports are stored under their own device ids
+// (since #34/#53). Both the "Last Workouts" feed and the HR-graph sport glyphs need the SAME union,
+// or Health-Connect-imported sessions get no glyph on the Today trend, so they share this one seam.
 // Deduped here (not per-consumer) with the Workouts screen's #687 semantics: a live strap recording
 // and its thin Health Connect import collapse to the richer row, so neither the feed shows a
 // duplicate card nor the HR trend a doubled sport glyph. dropDetectedShadows/filterDismissed are
 // deliberately absent: `detected` rows live under `<deviceId>-noop`, which this union never queries.
-private suspend fun WhoopRepository.workoutsAllSources(from: Long, to: Long): List<WorkoutRow> =
+private suspend fun WhoopRepository.workoutsAllSources(
+    activeDeviceId: String,
+    from: Long,
+    to: Long,
+): List<WorkoutRow> =
     WorkoutEditing.dedupCrossSource(
-        workouts("my-whoop", from, to) +
+        workoutsUnion(activeDeviceId, from, to) +
             workouts("apple-health", from, to) +
             workouts("health-connect", from, to)
     )
@@ -4417,7 +4433,7 @@ private fun HeartRateTrendCard(
         // "Last Workouts" feed below showed them (#34/#53). The glyph self-hides when no strap HR
         // overlaps, so an import with no matching strap curve simply draws nothing.
         workoutsToday = runCatching {
-            viewModel.repo.workoutsAllSources(start - 6 * 3600L, end)
+            viewModel.repo.workoutsAllSources(viewModel.deviceId, start - 6 * 3600L, end)
                 .filter { it.startTs <= end && it.endTs >= start }
         }.getOrDefault(emptyList())
     }
@@ -5071,7 +5087,9 @@ private fun TodayWorkoutsSection(workouts: List<WorkoutRow>) {
     val feed = lastWorkoutsFeed(workouts)
     if (feed.isEmpty()) return
 
-    SectionHeader("Last Workouts", overline = "Activity", trailing = "14 days")
+    // "Latest Workouts", not "Last": "Last" read as "final". Mirrored on iOS (TodayView). Lives in
+    // strings.xml (values + values-de) so the header is localizable like the nav labels.
+    SectionHeader(stringResource(R.string.today_latest_workouts), overline = "Activity", trailing = "14 days")
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         feed.forEach { workout ->
             StatTile(
