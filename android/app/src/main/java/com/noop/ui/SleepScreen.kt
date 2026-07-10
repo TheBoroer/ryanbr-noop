@@ -3212,6 +3212,61 @@ internal fun stageIntervalsFromWeights(
     return out
 }
 
+/**
+ * Display-time smoothing — a straight port of Swift `Hypnogram.displaySmoothed` (WHOOP-style,
+ * Packages/StrandDesign/Sources/StrandDesign/Hypnogram.swift:92). The on-device stager emits
+ * 30 s-epoch runs, so a real night arrives as 60–100 fragments; brief flickers are absorbed into
+ * their surroundings AT DISPLAY TIME. Render-only: totals, percentages and stored data are
+ * computed from the raw segments elsewhere and are untouched. Pass minDurationSec = 0 for raw.
+ */
+internal fun displaySmoothed(
+    intervals: List<StageInterval>,
+    minDurationSec: Double,
+): List<StageInterval> {
+    if (intervals.size <= 2 || minDurationSec <= 0.0) return intervals   // Swift: guard count > 2
+
+    // Coalesce adjacent same-stage runs (also bridges the zero-length seams between epochs).
+    fun coalesce(ivs: List<StageInterval>): MutableList<StageInterval> {
+        val out = mutableListOf<StageInterval>()
+        for (iv in ivs) {
+            val last = out.lastOrNull()
+            if (last != null && last.stage == iv.stage && iv.startSec - last.endSec < 1.0) {
+                out[out.size - 1] = StageInterval(last.stage, last.startSec, iv.endSec)
+            } else {
+                out.add(iv)
+            }
+        }
+        return out
+    }
+
+    var ivs = coalesce(intervals)
+    // Repeatedly absorb the shortest sub-threshold fragment into its longer neighbour,
+    // re-coalescing after each pass, until every remaining block clears the threshold.
+    while (ivs.size > 1) {
+        val idx = ivs.indices
+            .filter { ivs[it].durationSec < minDurationSec }
+            .minByOrNull { ivs[it].durationSec } ?: break
+        val victim = ivs[idx]
+        val prev = if (idx > 0) ivs[idx - 1] else null
+        val next = if (idx < ivs.size - 1) ivs[idx + 1] else null
+        when {
+            prev != null && next != null ->
+                // Absorb into the longer neighbour so the dominant surrounding stage wins.
+                if (prev.durationSec >= next.durationSec) {
+                    ivs[idx - 1] = StageInterval(prev.stage, prev.startSec, victim.endSec)
+                } else {
+                    ivs[idx + 1] = StageInterval(next.stage, victim.startSec, next.endSec)
+                }
+            prev != null -> ivs[idx - 1] = StageInterval(prev.stage, prev.startSec, victim.endSec)
+            next != null -> ivs[idx + 1] = StageInterval(next.stage, victim.startSec, next.endSec)
+            else -> break
+        }
+        ivs.removeAt(idx)
+        ivs = coalesce(ivs)
+    }
+    return ivs
+}
+
 // MARK: - Hours vs Needed card
 
 /**
