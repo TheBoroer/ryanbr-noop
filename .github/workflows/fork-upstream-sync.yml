@@ -1,0 +1,79 @@
+# Fork-only: watches upstream (ryanbr/noop) for new releases and auto-merges them into `dev`.
+#
+# GitHub can't deliver webhooks from a repo you don't admin, and the `release:` trigger only
+# fires for releases in THIS repo — so this polls upstream's latest release on a schedule
+# instead (every 6 hours, plus manual dispatch).
+#
+# When a new upstream release tag appears that isn't already in `dev`, it merges the tag into
+# `dev`, pushes, and explicitly dispatches fork-dev-build.yml (a push made with GITHUB_TOKEN
+# doesn't trigger other workflows' `push:` events, so the dispatch is required — and it also
+# means no double build).
+#
+# On a merge conflict the run just fails — GitHub emails a workflow-failure notification, and
+# you resolve the merge locally (git fetch upstream && git merge <tag> on dev).
+#
+# NOTES:
+#   - Scheduled workflows only run from the default branch, so this file must live on `main`.
+#   - GitHub auto-disables cron workflows after 60 days without repo activity; re-enable in
+#     the Actions tab if that happens.
+name: Upstream release sync (fork)
+
+on:
+  schedule:
+    - cron: '23 */6 * * *' # every 6h (odd minute to dodge top-of-hour cron congestion)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    # Fork-only guard — never run if this file somehow lands upstream.
+    if: github.repository == 'TheBoroer/ryanbr-noop'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Get latest upstream release tag
+        id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(gh release view --repo ryanbr/noop --json tagName --jq .tagName)"
+          echo "Latest upstream release: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Merge release tag into dev if new
+        id: merge
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+        run: |
+          git remote add upstream https://github.com/ryanbr/noop.git
+          git fetch --no-tags upstream "refs/tags/$TAG:refs/tags/$TAG"
+
+          if git merge-base --is-ancestor "$TAG^{commit}" HEAD; then
+            echo "Release $TAG already merged into dev — nothing to do."
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git merge --no-ff "$TAG" -m "Auto-merge upstream release $TAG into dev"
+          git push origin dev
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch dev build
+        if: steps.merge.outputs.merged == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run fork-dev-build.yml --ref dev
