@@ -992,6 +992,17 @@ struct MetricDetailView: View {
             NoopCard {
                 VStack(alignment: .leading, spacing: NoopMetrics.gap) {
                     Text("Readings").strandOverline()
+                    // Slim column header naming the three columns — SAME frames as the data rows below so
+                    // each label sits over its column. Android twin (VitalReadingsTable) mirrors this.
+                    HStack(spacing: 12) {
+                        Text("Date")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text("Value")
+                        Text("Source")
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textSecondary)
                     VStack(spacing: 0) {
                         ForEach(Array(rows.enumerated()), id: \.offset) { idx, row in
                             HStack(spacing: 12) {

@@ -2205,6 +2205,31 @@ private fun VitalReadingsTable(rows: List<VitalReadingRow>) {
     NoopCard {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Overline("Readings")
+            // Slim column header naming the three columns — SAME weights as the data rows below so each
+            // label sits over its column. Swift twin (MetricExplorerView.readingsTable) mirrors this.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Date",
+                    style = NoopType.footnote,
+                    color = Palette.textSecondary,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "Value",
+                    style = NoopType.footnote,
+                    color = Palette.textSecondary,
+                )
+                Text(
+                    "Source",
+                    style = NoopType.footnote,
+                    color = Palette.textSecondary,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.weight(1f),
+                )
+            }
             rows.forEachIndexed { index, row ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
