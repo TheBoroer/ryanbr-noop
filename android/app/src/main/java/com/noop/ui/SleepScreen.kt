@@ -66,6 +66,7 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -1307,38 +1308,240 @@ private fun HypnogramWithAxis(
             }
         }
         if (showsAxis && onsetTs != null && wakeTs != null) {
-            val onset = clockTimeLabel(onsetTs)
-            val mid = clockTimeLabel((onsetTs + wakeTs) / 2L)
-            val wake = clockTimeLabel(wakeTs)
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    onset,
-                    style = NoopType.footnote,
-                    color = Palette.textTertiary,
-                    textAlign = TextAlign.Start,
-                    maxLines = 1,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    mid,
-                    style = NoopType.footnote,
-                    color = Palette.textTertiary,
-                    textAlign = TextAlign.Center,
-                    overflow = TextOverflow.Ellipsis,
-                    maxLines = 1,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    wake,
-                    style = NoopType.footnote,
-                    color = Palette.textTertiary,
-                    textAlign = TextAlign.End,
-                    maxLines = 1,
-                    modifier = Modifier.weight(1f),
-                )
-            }
+            ClockLabelRow(onsetTs, wakeTs)
         }
     }
+}
+
+/**
+ * The onset · midpoint · wake clock-label row under a night timeline. Extracted from
+ * [HypnogramWithAxis] so the #988 stage-timeline rows share the exact same axis rendering.
+ */
+@Composable
+private fun ClockLabelRow(onsetTs: Long, wakeTs: Long) {
+    val onset = clockTimeLabel(onsetTs)
+    val mid = clockTimeLabel((onsetTs + wakeTs) / 2L)
+    val wake = clockTimeLabel(wakeTs)
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            onset,
+            style = NoopType.footnote,
+            color = Palette.textTertiary,
+            textAlign = TextAlign.Start,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            mid,
+            style = NoopType.footnote,
+            color = Palette.textTertiary,
+            textAlign = TextAlign.Center,
+            overflow = TextOverflow.Ellipsis,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            wake,
+            style = NoopType.footnote,
+            color = Palette.textTertiary,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/** 90 s display floor for the stage rows — rows tolerate fine texture, so 90 s, not the staircase's 300 s. */
+private const val STAGE_ROW_SMOOTH_SEC = 90.0
+
+/**
+ * iOS #988 port — the WHOOP-style per-stage timeline stack that replaces the flat hypnogram strip
+ * for real-stage nights. Four tappable rows in WHOOP order (AWAKE · LIGHT · DEEP · REM), each a
+ * hatched full-night track with solid segments on the shared onset→wake axis; MotionStrip and the
+ * clock-label axis sit under the rows on the SAME timeline; a fixed-height insight slot closes the
+ * stack. The rows ARE the legend — no dot row, no footer. Mirrors SleepView.stageTimeline.
+ */
+@Composable
+private fun StageTimeline(
+    realSegments: List<Pair<String, Float>>,
+    s: Stages,
+    onsetTs: Long?,
+    wakeTs: Long?,
+    motionEpochs: List<Double>,
+) {
+    // Night span: the session window when we have one (the clock axis uses the same span), else
+    // the segments' own summed minutes — the fractions are identical either way.
+    val weightSec = realSegments.sumOf { (_, wt) -> if (wt.isFinite() && wt > 0f) wt.toDouble() * 60.0 else 0.0 }
+    val spanSec = if (onsetTs != null && wakeTs != null && wakeTs > onsetTs) {
+        (wakeTs - onsetTs).toDouble()
+    } else {
+        weightSec
+    }
+    val intervals = remember(realSegments, spanSec) {
+        displaySmoothed(stageIntervalsFromWeights(realSegments, spanSec), STAGE_ROW_SMOOTH_SEC)
+    }
+    // Tap-to-highlight; keyed on the night's segments so navigating nights clears the selection.
+    var selectedStage by remember(realSegments) { mutableStateOf<String?>(null) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(Metrics.space8)) {
+        listOf(
+            Triple("Awake", s.awake, Palette.sleepAwake),
+            Triple("Light", s.light, Palette.sleepLight),
+            Triple("Deep", s.deep, Palette.sleepDeep),
+            Triple("REM", s.rem, Palette.sleepREM),
+        ).forEach { (label, minutes, color) ->
+            StageTimelineRow(
+                label = label,
+                minutes = minutes,
+                total = s.total,
+                color = color,
+                spans = stageRowSpans(intervals, label, spanSec),
+                selected = selectedStage == label,
+                dimmed = selectedStage != null && selectedStage != label,
+                onTap = { selectedStage = if (selectedStage == label) null else label },
+            )
+        }
+        // #407 — MotionStrip component + data path untouched; relocated UNDER the rows on the SAME
+        // timeline. Same inner insets as the rows' tracks so epochs don't skew against the segments.
+        Box(modifier = Modifier.padding(horizontal = Metrics.stageRowPadH)) {
+            MotionStrip(motionEpochs)
+        }
+        if (onsetTs != null && wakeTs != null) {
+            Box(modifier = Modifier.padding(horizontal = Metrics.stageRowPadH)) {
+                ClockLabelRow(onsetTs, wakeTs)
+            }
+        }
+        StageInsight(selectedStage, s)
+    }
+}
+
+/**
+ * One per-stage timeline row: STAGE overline + coloured % + right-aligned duration over a hatched
+ * full-night track with the stage's solid segments. Selected row gets a hairlineStrong stroke;
+ * when ANOTHER row is selected this row's segments and % dim to tertiary. One collapsed a11y node —
+ * "Awake: 49 min, 10 percent of the night". Mirrors SleepView.stageTimelineRow.
+ */
+@Composable
+private fun StageTimelineRow(
+    label: String,
+    minutes: Double,
+    total: Double,
+    color: Color,
+    spans: List<Pair<Float, Float>>,
+    selected: Boolean,
+    dimmed: Boolean,
+    onTap: () -> Unit,
+) {
+    val percent = if (total > 0.0) (minutes / total * 100.0).roundToInt() else 0
+    val segColor = if (dimmed) Palette.textTertiary.copy(alpha = 0.55f) else color
+    val pctColor = if (dimmed) Palette.textTertiary else color
+    val shape = RoundedCornerShape(Metrics.stageRowCorner)
+    Column(
+        verticalArrangement = Arrangement.spacedBy(Metrics.space6),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Palette.textPrimary.copy(alpha = 0.045f))
+            .then(if (selected) Modifier.border(1.5.dp, Palette.hairlineStrong, shape) else Modifier)
+            .clickable(onClickLabel = "Highlights this stage on the sleep chart", onClick = onTap)
+            .padding(horizontal = Metrics.stageRowPadH, vertical = Metrics.stageRowPadV)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "$label: ${durationText(minutes)}, $percent percent of the night"
+            },
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                label.uppercase(Locale.getDefault()),
+                style = NoopType.overline,
+                color = Palette.textPrimary,
+                maxLines = 1,
+            )
+            Spacer(modifier = Modifier.width(Metrics.space8))
+            Text("$percent%", style = NoopType.captionNumber, color = pctColor, maxLines = 1)
+            Spacer(modifier = Modifier.weight(1f))
+            Text(
+                durationText(minutes),
+                style = NoopType.captionNumber,
+                color = Palette.textPrimary,
+                maxLines = 1,
+            )
+        }
+        StageRowTrack(spans = spans, color = segColor)
+    }
+}
+
+/**
+ * The row's track, drawn in a SINGLE Canvas (PERF: a fragmented night must not become hundreds of
+ * composables — Charts.kt hoist convention): a recessed full-night base with faint diagonal
+ * hatching ("no segment here" reads as "elsewhere in the night", not missing data), then the
+ * stage's solid rounded segments with a width floor, clamped so floored widths stay on-canvas
+ * (same #36 lesson as HypnogramWithAxis).
+ */
+@Composable
+private fun StageRowTrack(spans: List<Pair<Float, Float>>, color: Color) {
+    Canvas(modifier = Modifier.fillMaxWidth().height(Metrics.stageRowTrackHeight)) {
+        val w = size.width
+        val h = size.height
+        if (w <= 0f || h <= 0f) return@Canvas
+
+        val trackRadius = CornerRadius(Metrics.stageSegCorner.toPx(), Metrics.stageSegCorner.toPx())
+        drawRoundRect(color = Palette.surfaceInset, size = Size(w, h), cornerRadius = trackRadius)
+        clipRect(0f, 0f, w, h) {
+            val step = 6.dp.toPx()
+            var x = -h
+            while (x < w) {
+                drawLine(
+                    color = Palette.hairline,
+                    start = Offset(x, h),
+                    end = Offset(x + h, 0f),
+                    strokeWidth = 1f,
+                )
+                x += step
+            }
+        }
+
+        val minW = Metrics.stageSegMinWidth.toPx()
+        val segRadius = CornerRadius(Metrics.stageSegCorner.toPx(), Metrics.stageSegCorner.toPx())
+        spans.forEach { (fracStart, fracWidth) ->
+            if (!fracStart.isFinite() || !fracWidth.isFinite() || fracWidth <= 0f) return@forEach
+            val segW = maxOf(w * fracWidth, minW).coerceAtMost(w)
+            val x0 = (w * fracStart).coerceIn(0f, w - segW)
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(x0, 0f),
+                size = Size(segW, h),
+                cornerRadius = segRadius,
+            )
+        }
+    }
+}
+
+/**
+ * Fixed-height per-stage insight slot under the axis: with a stage selected, that stage tonight;
+ * otherwise the quiet "tap a row" hint. Fixed height so selection never reflows the card. The
+ * 30-day typical-range compare is a follow-up — no such repo call exists on Android yet (design
+ * §Real-stage nights item 6).
+ */
+@Composable
+private fun StageInsight(selectedStage: String?, s: Stages) {
+    val text = when (selectedStage) {
+        "Awake" -> stageInsightLine("Awake", s.awake, s.total)
+        "Light" -> stageInsightLine("Light", s.light, s.total)
+        "Deep" -> stageInsightLine("Deep", s.deep, s.total)
+        "REM" -> stageInsightLine("REM", s.rem, s.total)
+        else -> "Tap a stage to highlight it across the night."
+    }
+    Box(
+        modifier = Modifier.fillMaxWidth().height(Metrics.stageInsightHeight),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Text(text, style = NoopType.footnote, color = Palette.textTertiary, maxLines = 2)
+    }
+}
+
+private fun stageInsightLine(label: String, minutes: Double, total: Double): String {
+    val percent = if (total > 0.0) (minutes / total * 100.0).roundToInt() else 0
+    return "$label tonight: ${durationText(minutes)} — $percent% of the night."
 }
 
 /**
