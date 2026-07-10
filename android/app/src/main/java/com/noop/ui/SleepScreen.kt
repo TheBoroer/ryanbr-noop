@@ -516,6 +516,7 @@ fun SleepScreen(
                 napBlocks = night?.napBlocks ?: emptyList(),
                 habitualMidsleepSec = habitualMidsleep,
                 motionEpochs = night?.groupMotion ?: emptyList(),
+                groupInBedMin = night?.groupInBedMin,
             )
             }
             // Tiles / ledger / trends read the FULL-history model (#940): they stay up when only the
@@ -789,6 +790,10 @@ private fun Hero(
     // Per-epoch MOTION for the main-night GROUP (#407), laid in group order by `selectNight`. Empty → honest
     // empty state. Drawn UNDER the hypnogram on the same timeline. Mirrors iOS SleepView.Night.motionEpochs.
     motionEpochs: List<Double> = emptyList(),
+    // Whole-group time-in-bed minutes for a fragmented night (#561): Σ fragment windows, gaps
+    // excluded, computed by `selectNight`. Null for single-block days → the session-window /
+    // stage-total fallbacks below apply unchanged.
+    groupInBedMin: Double? = null,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         NightNavHeader(nightOffset, lastIndex, clock, onNavigate, session, onUpdateTimes, onDeleteSession, onAddNap, onPickNightDate)
@@ -813,7 +818,11 @@ private fun Hero(
             // After a bed/wake edit the session window is the source of truth for time-in-bed,
             // so the subtitle tracks the edit even before the stage minutes are recomputed. Uses the
             // EFFECTIVE onset so a hand-edited bedtime is reflected. (#160 / PR #395)
-            val inBedMin = session?.let { (it.endTs - it.effectiveStartTs) / 60.0 } ?: s.total
+            // A fragmented night prefers the GROUP total (#561): `session` is only the WINNING
+            // fragment, so its window alone undershot the summed stage minutes shown beside it.
+            val inBedMin = groupInBedMin
+                ?: session?.let { (it.endTs - it.effectiveStartTs) / 60.0 }
+                ?: s.total
             val subtitle = "${durationText(inBedMin)} in bed · ${display.efficiencyText} efficiency" +
                 (if (display.realSegments != null) " · approx. stages (on-device)" else "")
             // iOS #988 port: true per-epoch segments (≥ 2 — a single run has no transitions to lay
@@ -2721,6 +2730,14 @@ internal data class HeroNight(
     // → the hero shows an honest empty state instead of a fabricated zero trace. Read off the already-
     // resolved group, NOT a re-resolution of the night.
     val groupMotion: List<Double> = emptyList(),
+    // Time-in-bed for the whole main-night GROUP (#561): Σ(endTs − effectiveStartTs) across the
+    // hero fragments, in minutes. The hero subtitle previously derived in-bed from `session` alone
+    // (the single WINNING fragment), so a fragmented night's "Xh in bed" undershot the stage total
+    // it sat next to. Summing fragment windows (NOT wall-clock first-onset→last-wake) excludes the
+    // inter-fragment awake gaps, mirroring sumGroupStages/AnalyticsEngine, so asleep ≤ in-bed and
+    // the efficiency shown beside it stays coherent. Null for a single-block day → the hero keeps
+    // its session-window / stage-total fallbacks.
+    val groupInBedMin: Double? = null,
 )
 
 /** What the hero card draws for the selected night — null means no usable stage data
@@ -2811,8 +2828,13 @@ internal fun selectNight(
     // nightOnsetTs / synth.startTs), closed by the group's latest wake. `session` stays the edit anchor only.
     val heroOnsetTs = heroGroup.firstOrNull()?.effectiveStartTs ?: session.effectiveStartTs
     val heroWakeTs = heroGroup.maxOfOrNull { it.endTs } ?: session.endTs
+    // #561: whole-group time-in-bed (minutes) — fragment windows summed, gaps excluded — so the hero
+    // subtitle matches the multi-fragment stage total it is shown with. Single-block days stay null.
+    val groupInBedMin = if (heroGroup.size > 1) {
+        heroGroup.sumOf { (it.endTs - it.effectiveStartTs).coerceAtLeast(0L) } / 60.0
+    } else null
     return HeroNight(session, dayKey, segments, clockLabelFor(heroOnsetTs, heroWakeTs), napBlocks, groupStages,
-        groupSegments, groupMotion)
+        groupSegments, groupMotion, groupInBedMin)
 }
 
 /**
