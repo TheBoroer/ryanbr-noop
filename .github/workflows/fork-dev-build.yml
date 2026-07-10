@@ -1,0 +1,62 @@
+# Fork-only: personal DEV build — auto-builds the Android APK on every push to `dev` and publishes
+# it to a single rolling `dev-latest` prerelease (recreated in place, same pattern as
+# fork-testing-build.yml's `testing-latest`). One stable download URL for the phone, always the
+# newest dev build, zero cleanup.
+#
+# Android only (no macOS/iOS) so it stays fast (~5 min). Builds fullDebug — signed with the
+# committed android/fork-debug.keystore via the debug signingConfig in build.gradle.kts, so
+# sideloaded updates keep working (same key every run). Installs BESIDE the official app as
+# com.noop.whoop.debug. Never touches `testing-latest` or real releases.
+name: Dev build (fork)
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dev-build
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/wrapper-validation@v4
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        run: ./gradlew assembleFullDebug
+
+      - name: Publish rolling dev-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="dev-latest"
+          DATE=$(date -u +%Y-%m-%d)
+          SHA="${GITHUB_SHA:0:7}"
+          VER=$(grep -m1 'versionName' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/')
+          cp app/build/outputs/apk/full/debug/*.apk "NOOP-android-dev-v${VER}.apk"
+          # ROLLING release: recreate the single tag so stale assets never linger —
+          # one stable URL, always the newest build. (To KEEP a build, cut a one-off tag.)
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
+            --title "NOOP Dev — base ${VER} · ${DATE} · ${SHA}" \
+            --notes "Rolling **dev** build — upstream main + my merged fixes (\`dev\` branch), refreshed on every push. Debug-keyed, installs **beside** the official app (\`com.noop.whoop.debug\`, separate data).
+
+          - **Android (debug)** — \`NOOP-android-dev-v${VER}.apk\`
+
+          Base app version ${VER} · built ${DATE} · \`${SHA}\`."
+          gh release upload "$TAG" "NOOP-android-dev-v${VER}.apk" \
+            --repo "$GITHUB_REPOSITORY" --clobber
