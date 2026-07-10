@@ -3179,6 +3179,39 @@ internal fun parsePersistedSegments(json: String?): List<PersistedSegment>? {
     }.getOrNull()
 }
 
+// MARK: - Stage timeline logic (iOS #988 port — pure, unit-tested)
+
+/** One contiguous run of a single sleep stage, in seconds from the night's onset. */
+internal data class StageInterval(val stage: String, val startSec: Double, val endSec: Double) {
+    val durationSec: Double get() = endSec - startSec
+}
+
+/**
+ * Reconstruct absolute (stage, startSec, endSec) intervals from the hero's ordered
+ * `realSegments` weight pairs (name, minutes) by walking cumulative fractions across [spanSec]
+ * (design 2026-07-10, §Real-stage nights item 3). Non-finite / non-positive weights are skipped —
+ * they carry no drawable width. Returns [] when nothing is drawable.
+ */
+internal fun stageIntervalsFromWeights(
+    segments: List<Pair<String, Float>>,
+    spanSec: Double,
+): List<StageInterval> {
+    if (segments.isEmpty() || !spanSec.isFinite() || spanSec <= 0.0) return emptyList()
+    val weights = segments.map { (_, wt) -> if (wt.isFinite() && wt > 0f) wt.toDouble() else 0.0 }
+    val total = weights.sum()
+    if (total <= 0.0) return emptyList()
+    val out = ArrayList<StageInterval>(segments.size)
+    var cum = 0.0
+    segments.forEachIndexed { i, (name, _) ->
+        val w = weights[i]
+        if (w <= 0.0) return@forEachIndexed
+        val start = spanSec * (cum / total)
+        cum += w
+        out.add(StageInterval(name, start, spanSec * (cum / total)))
+    }
+    return out
+}
+
 // MARK: - Hours vs Needed card
 
 /**
