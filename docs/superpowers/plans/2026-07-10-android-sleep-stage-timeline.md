@@ -42,11 +42,11 @@ the strip does today; totals/percentages stay on the raw `Stages` numbers — sm
 
 ```bash
 # Run one test class (from repo root):
-cd android && ./gradlew :app:testDebugUnitTest --tests "com.noop.ui.StageDisplaySmoothingTest"
+cd android && ./gradlew :app:testFullDebugUnitTest --tests "com.noop.ui.StageDisplaySmoothingTest"
 # Compile check (UI tasks):
-cd android && ./gradlew :app:compileDebugKotlin
+cd android && ./gradlew :app:compileFullDebugKotlin
 # Full unit suite:
-cd android && ./gradlew :app:testDebugUnitTest
+cd android && ./gradlew :app:testFullDebugUnitTest
 ```
 
 Note: this repo uses git worktrees and a shared stash stack — never bare `git stash`.
@@ -137,7 +137,7 @@ class StageTimelineIntervalsTest {
 ### Step 2: Run it — confirm it fails
 
 ```bash
-cd android && ./gradlew :app:testDebugUnitTest --tests "com.noop.ui.StageTimelineIntervalsTest"
+cd android && ./gradlew :app:testFullDebugUnitTest --tests "com.noop.ui.StageTimelineIntervalsTest"
 ```
 
 Expected: **compilation failure** (`stageIntervalsFromWeights` / `StageInterval` unresolved). That is
@@ -334,7 +334,7 @@ class StageDisplaySmoothingTest {
 ### Step 2: Run it — confirm it fails
 
 ```bash
-cd android && ./gradlew :app:testDebugUnitTest --tests "com.noop.ui.StageDisplaySmoothingTest"
+cd android && ./gradlew :app:testFullDebugUnitTest --tests "com.noop.ui.StageDisplaySmoothingTest"
 ```
 
 Expected: compile failure (`displaySmoothed` unresolved).
@@ -482,7 +482,7 @@ class StageRowSpansTest {
 ### Step 2: Run it — confirm it fails
 
 ```bash
-cd android && ./gradlew :app:testDebugUnitTest --tests "com.noop.ui.StageRowSpansTest"
+cd android && ./gradlew :app:testFullDebugUnitTest --tests "com.noop.ui.StageRowSpansTest"
 ```
 
 ### Step 3: Implement
@@ -519,7 +519,7 @@ internal fun stageRowSpans(
 Same command; then run all three new classes together:
 
 ```bash
-cd android && ./gradlew :app:testDebugUnitTest --tests "com.noop.ui.Stage*"
+cd android && ./gradlew :app:testFullDebugUnitTest --tests "com.noop.ui.Stage*"
 ```
 
 ### Step 5: Commit
@@ -557,7 +557,7 @@ Insert directly after those two lines:
 ### Step 2: Verify it compiles
 
 ```bash
-cd android && ./gradlew :app:compileDebugKotlin
+cd android && ./gradlew :app:compileFullDebugKotlin
 ```
 
 ### Step 3: Commit
@@ -841,7 +841,7 @@ private fun stageInsightLine(label: String, minutes: Double, total: Double): Str
 ### Step 4: Compile
 
 ```bash
-cd android && ./gradlew :app:compileDebugKotlin
+cd android && ./gradlew :app:compileFullDebugKotlin
 ```
 
 Fix only mechanical issues (missing import, typo). If `NoopType.overline` needs the tracking
@@ -1001,7 +1001,7 @@ constant too and note it in the commit).
 ### Step 3: Compile + full unit suite
 
 ```bash
-cd android && ./gradlew :app:compileDebugKotlin && ./gradlew :app:testDebugUnitTest
+cd android && ./gradlew :app:compileFullDebugKotlin && ./gradlew :app:testFullDebugUnitTest
 ```
 
 Everything green, including the pre-existing `SleepStageSegmentsTest`.
@@ -1019,7 +1019,7 @@ git add -A && git commit -m "feat: sleep hero uses per-stage timeline rows for r
 ### Automated
 
 ```bash
-cd android && ./gradlew :app:testDebugUnitTest && ./gradlew :app:compileDebugKotlin
+cd android && ./gradlew :app:testFullDebugUnitTest && ./gradlew :app:compileFullDebugKotlin
 ```
 
 ### Manual (emulator or device, debug build)
