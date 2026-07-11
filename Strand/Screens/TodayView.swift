@@ -515,6 +515,23 @@ struct TodayView: View {
         return Repository.lastVitalsDay(days: repo.days, todayKey: displayDay?.day ?? selectedDayKey)
     }
 
+    /// PER-FIELD SpO₂ carry — the twin of `lastVitalsDay` for the field its predicate does NOT check. The
+    /// on-device engine writes `spo2Pct = nil` (it banks only raw `spo2Red`/`spo2Ir`), so every computed
+    /// "-noop" row lacks a percentage; only imported rows carry one. A whole-row carry (`lastScoredRecoveryDay`
+    /// or `lastVitalsDay`) therefore lands on a row with null `spo2Pct` and the Blood Oxygen card reads
+    /// "No Data" even though an imported row holds a real reading. Resolving SpO₂ independently (the last
+    /// strictly-prior row that HAS it) mirrors the Android `lastSpo2Row`. Only on today; today's key bounds it.
+    private var lastSpo2Day: DailyMetric? {
+        guard selectedDayOffset == 0 else { return nil }
+        return Repository.lastSpo2Day(days: repo.days, todayKey: displayDay?.day ?? selectedDayKey)
+    }
+
+    /// PER-FIELD skin-temperature-deviation carry — twin of `lastSpo2Day`; mirrors the Android `lastSkinTempRow`.
+    private var lastSkinTempDay: DailyMetric? {
+        guard selectedDayOffset == 0 else { return nil }
+        return Repository.lastSkinTempDay(days: repo.days, todayKey: displayDay?.day ?? selectedDayKey)
+    }
+
     /// Pure carry-over selector behind `lastScoredRecoveryDay`, extracted so the gate + selection can be
     /// unit-tested without a live view (mirrors `buildingHintCopy` / the Android `lastScoredRecoveryDay`).
     /// Returns the freshest scored prior row to carry over, or nil. `days` is oldest→newest; the chosen
@@ -2073,10 +2090,16 @@ struct TodayView: View {
             return withUnit(d?.respRateBpm.map { String(format: "%.1f", $0) }
                             ?? sparks["resp_rate"]?.last.map { String(format: "%.1f", $0) } ?? "—")
         case .bloodOxygen:
-            return d?.spo2Pct.map { String(format: "%.0f%%", $0) } ?? "—"
+            // PER-FIELD carry: today → whole-row vitals carry → the last row that actually HAS a reading
+            // (computed "-noop" rows write spo2Pct = nil), so this card agrees with the Key Metrics tile
+            // (`d?.spo2Pct ?? carriedVital(perField: lastSpo2Day)`). Mirrors the Android dashboardCardValue.
+            return (d?.spo2Pct ?? lastVitalsDay?.spo2Pct ?? lastSpo2Day?.spo2Pct)
+                .map { String(format: "%.0f%%", $0) } ?? "—"
         case .skinTemp:
-            // Stored as a deviation from baseline (°C); show it signed so +/- reads honestly.
-            return d?.skinTempDevC.map { String(format: "%+.1f°", $0) } ?? "—"
+            // Stored as a deviation from baseline (°C); show it signed so +/- reads honestly. Same per-field
+            // carry as Blood Oxygen.
+            return (d?.skinTempDevC ?? lastVitalsDay?.skinTempDevC ?? lastSkinTempDay?.skinTempDevC)
+                .map { String(format: "%+.1f°", $0) } ?? "—"
         case .sleep:
             return sleepValue(d)
         case .steps:
@@ -3061,11 +3084,19 @@ struct TodayView: View {
         unit: String,
         today: Double?,
         prior: (DailyMetric) -> Double?,
+        perField: DailyMetric? = nil,
         format: (Double) -> String
     ) -> (value: String, caption: String?) {
         if let v = today { return (format(v), unit) }
         if let p = lastScoredRecoveryDay, let v = prior(p) {
             return (format(v), carriedCaption(p))
+        }
+        // PER-FIELD carry: the whole-row carry above (`lastScoredRecoveryDay`) can land on a row whose field
+        // is nil (the engine writes spo2Pct = nil on computed "-noop" rows), so fall through to the freshest
+        // strictly-prior row that HAS this field, stamped with its OWN carried date. Tried after the whole-row
+        // carry so a genuine last-scored-night reading keeps its caption. Mirrors the Android per-field carry.
+        if let pf = perField, let v = prior(pf) {
+            return (format(v), carriedCaption(pf))
         }
         // H10, an empty vital on TODAY reads honestly ("After tonight's sleep") instead of a lone unit
         // beside a bare ", ", which looked like a fault; a navigated PAST day keeps the plain unit (it's
@@ -3164,8 +3195,12 @@ struct TodayView: View {
                 sparkColor: StrandPalette.metricRose
             )
         case .bloodOxygen:
+            // PER-FIELD carry (perField: lastSpo2Day): the whole-row `lastScoredRecoveryDay` carry lands on a
+            // row whose spo2Pct is nil (computed rows never bank a percentage), so the tile falls through to
+            // the last row that actually has a reading. Mirrors the Android Blood Oxygen tile's spo2CarryDay.
             let spo2 = carriedVital(unit: "SpO₂", today: d?.spo2Pct,
-                                    prior: { $0.spo2Pct }, format: { String(format: "%.0f%%", $0) })
+                                    prior: { $0.spo2Pct }, perField: lastSpo2Day,
+                                    format: { String(format: "%.0f%%", $0) })
             StatTile(
                 label: "Blood Oxygen",
                 value: spo2.value,

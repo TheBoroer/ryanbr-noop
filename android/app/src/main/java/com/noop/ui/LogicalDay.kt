@@ -111,7 +111,7 @@ internal fun lastVitalsRow(days: List<DailyMetric>, todayKey: String): DailyMetr
  * [lastVitalsRow]'s predicate only checks HRV/resting-HR/respiratory, so it can select a row whose spo2Pct is
  * null (the on-device engine writes spo2Pct = null; only imported rows carry it) while an OLDER imported row
  * has a real reading. Resolving SpO₂ per field keeps the Blood Oxygen card honest instead of "No Data".
- * Same `it.day < todayKey` future-clock guard. Mirrors Swift VitalSourceResolution's per-field pick.
+ * Same `it.day < todayKey` future-clock guard. Mirrors Swift `DailyMetric.lastSpo2Day` / `lastSkinTempDay`.
  */
 internal fun lastSpo2Row(days: List<DailyMetric>, todayKey: String): DailyMetric? =
     days.lastOrNull { it.spo2Pct != null && it.day < todayKey }

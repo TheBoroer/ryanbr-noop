@@ -847,7 +847,7 @@ fun TodayScreen(
     // or lastVitalsDay) therefore lands on a row with null spo2Pct/skinTempDevC and the Blood Oxygen /
     // Skin Temp cards read "No Data" even though an imported row holds a real reading. Resolving the two
     // fields independently (last strictly-prior row with the field non-null) mirrors iOS
-    // VitalSourceResolution's per-field pick. Same #547 future-clock bound; non-null only on today.
+    // TodayView.lastSpo2Day / lastSkinTempDay. Same #547 future-clock bound; non-null only on today.
     val lastSpo2Day: DailyMetric? = remember(days, carryOverTodayKey, selectedDayOffset, displayMetric) {
         if (selectedDayOffset == 0) lastSpo2Row(days, maxOf(displayMetric?.day ?: "", carryOverTodayKey)) else null
     }
@@ -1244,7 +1244,7 @@ fun TodayScreen(
                 // PER-FIELD SpO₂ / skin-temp carries: lastVitalsDay's predicate only checks HRV/RHR/resp,
                 // so these two fields resolve independently to the last row that actually has them
                 // (imported rows; computed "-noop" rows never carry spo2Pct). Mirrors iOS per-field
-                // VitalSourceResolution.
+                // carry (TodayView.lastSpo2Day / lastSkinTempDay via carriedVital).
                 spo2Day = lastSpo2Day,
                 skinTempDay = lastSkinTempDay,
                 stress = stressToday,
@@ -4102,7 +4102,7 @@ private fun MetricGrid(
     carriedDay: DailyMetric? = null,
     // PER-FIELD SpO₂ carry (see lastSpo2Row): carriedDay is recovery-gated and lands on rows whose
     // spo2Pct is null (computed rows never carry one), so the Blood Oxygen tile falls through to the
-    // last row that actually has a reading. Mirrors iOS VitalSourceResolution's per-field pick.
+    // last row that actually has a reading. Mirrors iOS TodayView.lastSpo2Day (carriedVital's per-field fallback).
     spo2CarryDay: DailyMetric? = null,
     unitSystem: UnitSystem = UnitSystem.METRIC,
     effortScale: EffortScale = EffortScale.HUNDRED,
