@@ -257,6 +257,13 @@ final class AppModel: ObservableObject {
             BatteryNotifier.onBatteryUpdate(pct: Int(pct.rounded()),
                                             charging: self.live.charging,
                                             enabled: self.behavior.batteryAlerts)
+            // Predictive runtime alert: the same reading just banked into the SoC buffer, so
+            // batteryEstimate is fresh here. Nil estimate (no readings yet) is a no-op — the 15%
+            // alert above remains the safety net.
+            BatteryNotifier.onRuntimeEstimate(remainingHours: self.live.batteryEstimate?.remainingHours,
+                                              charging: self.live.charging,
+                                              enabled: self.behavior.batteryAlerts
+                                                    && self.behavior.batteryPredictiveAlerts)
         }
         // HR-zone haptic coaching watches the smoothed bpm.
         $bpm.sink { [weak self] hr in self?.coachZone(hr) }.store(in: &hrCancellables)
@@ -793,6 +800,9 @@ final class AppModel: ObservableObject {
     /// Restart the connected strap (user-initiated, confirmation-gated in DevicesView). Non-destructive —
     /// the strap keeps its data and re-advertises after boot; NOOP auto-reconnects. See BLEManager.rebootStrap().
     func rebootStrap() { ble.rebootStrap() }
+    /// Send one WHOOP 4.0 reboot-probe candidate (Test Centre → Connection, 4.0 only). Confirmation-gated
+    /// in DevicesView; finds the real 4.0 reboot frame when the production one is ignored (#235).
+    func rebootProbe(_ variant: RebootProbeVariant) { ble.rebootProbe(variant) }
 
     /// Drop the current strap and clear bond state so a newly-picked strap model connects fresh
     /// (lets a user with both a WHOOP 4 and a 5/MG switch between them).
