@@ -9,8 +9,10 @@
 # doesn't trigger other workflows' `push:` events, so the dispatch is required — and it also
 # means no double build).
 #
-# On a merge conflict the run just fails — GitHub emails a workflow-failure notification, and
-# you resolve the merge locally (git fetch upstream && git merge <tag> on dev).
+# On a merge conflict the run does NOT fail. It aborts the merge and opens (or reuses) a single
+# PR `upstream-sync/<tag>` -> `dev` so GitHub surfaces the conflict for web/local resolution,
+# then exits green. This stops the 6-hourly cron from spamming a red run + failure email every
+# 6h for the same unresolved tag. Resolve + merge the PR to complete the sync.
 #
 # NOTES:
 #   - Scheduled workflows only run from the default branch. This fork's default branch is
@@ -28,6 +30,7 @@ on:
 permissions:
   contents: write
   actions: write
+  pull-requests: write
 
 concurrency:
   group: upstream-sync
@@ -57,6 +60,7 @@ jobs:
         id: merge
         env:
           TAG: ${{ steps.rel.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           git remote add upstream https://github.com/ryanbr/noop.git
           git fetch --no-tags upstream "refs/tags/$TAG:refs/tags/$TAG"
@@ -70,9 +74,46 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git merge --no-ff "$TAG" -m "Auto-merge upstream release $TAG into dev"
-          git push origin dev
-          echo "merged=true" >> "$GITHUB_OUTPUT"
+          # Try a clean auto-merge first.
+          if git merge --no-ff "$TAG" -m "Auto-merge upstream release $TAG into dev"; then
+            git push origin dev
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Conflict: self-heal the noise, keep a human on the code. Abort so the tree is clean,
+          # hand the merge off to a PR, and exit green so the cron stops failing every 6h.
+          git merge --abort
+          echo "merged=false" >> "$GITHUB_OUTPUT"
+
+          branch="upstream-sync/$TAG"
+
+          # Idempotent: if a PR for this tag is already open, there is nothing new to do.
+          open_count="$(gh pr list --base dev --head "$branch" --state open --json number --jq 'length')"
+          if [ "$open_count" != "0" ]; then
+            echo "Conflict PR for $TAG already open ($branch) — leaving it for manual resolution."
+            exit 0
+          fi
+
+          # Point a branch at the upstream tag commit and open a PR into dev. GitHub flags the
+          # conflicts on the PR; resolving + merging it performs the sync.
+          git push origin --force "$TAG^{commit}:refs/heads/$branch"
+          body="$(printf '%s\n' \
+            "Automated upstream sync could not cleanly merge \`$TAG\` into \`dev\`. There are conflicts." \
+            "" \
+            "**Resolve one of these ways:**" \
+            "- GitHub's web resolver on this PR (fine for small/comment-level conflicts), or" \
+            "- locally: \`git checkout dev && git fetch upstream && git merge $TAG\`, fix, then push." \
+            "" \
+            "Merging this PR completes the sync. Delete the \`$branch\` branch afterward." \
+            "" \
+            "_Opened by fork-upstream-sync.yml so the scheduled run stays green instead of failing every 6h._")"
+          gh pr create \
+            --base dev \
+            --head "$branch" \
+            --title "Merge upstream release $TAG into dev (conflicts)" \
+            --body "$body"
+          echo "Opened conflict PR for $TAG ($branch)."
 
       - name: Dispatch dev build
         if: steps.merge.outputs.merged == 'true'
