@@ -504,8 +504,16 @@ public enum SleepStager {
         guard let baseline = baseline else { return true }
         let seg = rowsBetween(hr, start: p.start, end: p.end) { $0.ts }
         if seg.count < hrRefineMinSamples { return true }
-        let meanHR = Double(seg.reduce(0) { $0 + $1.bpm }) / Double(seg.count)
-        return meanHR <= baseline * hrSleepBaselineMult
+        // Confirm on the run's MEDIAN, not its mean. A real sleep night carries brief arousal / wake HR
+        // spikes (observed to ~190 bpm) that pull the MEAN above baseline × mult and reject the run — and for
+        // a typical single main-sleep run per night that means zero sessions ("no sleep recorded") — while
+        // the spike-robust median stays at the true sleep level. Baseline is itself a median, so both sides
+        // use the same robust statistic; a genuinely elevated (awake) run still has a high median and fails.
+        // Median ≤ mean for the right-skewed HR of a real night, so this only ever RELAXES the gate — every
+        // run the mean already accepted still passes, and runs the mean wrongly dropped are recovered.
+        // Mirrors Kotlin `confirmSleepWithHR`.
+        let medHR = HRVAnalyzer.median(seg.map { Double($0.bpm) })
+        return medHR <= baseline * hrSleepBaselineMult
     }
 
     /// True when the run's CENTER, shifted to LOCAL time by tzOffsetSeconds, lands in the
@@ -1935,11 +1943,13 @@ public enum SleepStager {
             // analyze() pipeline. The 0x2A37 RR on a WHOOP 5/MG is PPG-derived and noisier
             // than a 4.0's; rMSSD is built from SUCCESSIVE differences, so an un-rejected
             // jitter spike inflates the session HRV. Ectopic rejection drops those (#262/#235).
-            let cleaned = HRVAnalyzer.cleanRR(bucket)
-            let rmssd: Double? = (cleaned.count >= 2) ? HRVAnalyzer.rmssdRaw(cleaned) : nil
+            // #204/#195: gap-aware — a successive difference straddling a dropped beat is skipped so a
+            // removed out-of-range/ectopic beat can't splice its neighbours into a spurious delta.
+            let cleaned = HRVAnalyzer.cleanRRGapAware(bucket)
+            let rmssd: Double? = (cleaned.nn.count >= 2) ? HRVAnalyzer.rmssdGapAware(cleaned.nn, cleaned.contiguous) : nil
             let center = t + windowS / 2
             let stage = stages.first { center >= $0.start && center < $0.end }?.stage ?? "?"
-            out.append(HrvWindow(startTs: t, stage: stage, cleanBeats: cleaned.count, rmssd: rmssd))
+            out.append(HrvWindow(startTs: t, stage: stage, cleanBeats: cleaned.nn.count, rmssd: rmssd))
             t += windowS
         }
         return out

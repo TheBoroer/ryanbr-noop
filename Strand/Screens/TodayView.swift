@@ -2007,34 +2007,30 @@ struct TodayView: View {
         switch card {
         case .stress:
             pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
-                          value: dashboardValue(card)) { StressView() }
-        case .fitnessAge:
+                          value: dashboardValue(card), route: .stress)
+        case .fitnessAge, .vitality, .steps, .calories:
             pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
-                          value: dashboardValue(card)) { HealthView() }
-        case .vitality:
-            pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
-                          value: dashboardValue(card)) { HealthView() }
+                          value: dashboardValue(card), route: .health)
         case .hrv, .restingHr, .respiratory, .bloodOxygen, .skinTemp:
             // The overnight vitals share the Health detail screen (the vital-signs surface).
             pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
-                          value: dashboardValue(card)) { HealthView() }
+                          value: dashboardValue(card), route: .health)
         case .sleep:
-            pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
-                          value: dashboardValue(card)) { SleepView() }
-        case .steps:
-            pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
-                          value: dashboardValue(card)) { HealthView() }
-        case .calories:
-            pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
-                          value: dashboardValue(card)) { HealthView() }
+            // #110: the value is `totalSleepMin` — WHOOP's imported TST, which can legitimately differ
+            // from the Sleep tab's on-device re-staged night. Label the row with its source + which night
+            // so a WHOOP figure (or an older night) is never silently shown as "last night" with no
+            // provenance; fall back to the card's static description when there's no banked sleep.
+            pinnedCardRow(icon: card.icon, tint: tint, title: card.title,
+                          subtitle: sleepSourceSubtitle(displayDay) ?? card.subtitle,
+                          value: dashboardValue(card), route: .sleep)
         case .hydration:
             pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
-                          value: dashboardValue(card)) { HydrationView() }
+                          value: dashboardValue(card), route: .hydration)
         case .coupled:
             // The Coupled view row (#43) carries NO metric value, it is a tap-through to the full
             // coupled day screen. An empty value renders just the icon + title + subtitle + chevron.
             pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
-                          value: dashboardValue(card)) { CoupledView() }
+                          value: dashboardValue(card), route: .coupled)
         }
     }
 
@@ -2126,14 +2122,13 @@ struct TodayView: View {
     }
 
     /// One WHOOP "My Dashboard" metric row: a thin-line tinted icon, an UPPERCASE tracked label over a grey
-    /// baseline caption, the big white value, and a chevron, the whole row navigates to `destination`. Flat
-    /// WHOOP styling (FrostedCardSurface, no glow), tokens only.
-    @ViewBuilder
-    private func pinnedCardRow<Dest: View>(icon: String, tint: Color, title: String, subtitle: String,
-                                           value: String, @ViewBuilder destination: @escaping () -> Dest) -> some View {
-        NavigationLink {
-            destination()
-        } label: {
+    /// baseline caption, the big white value, and a chevron, the whole row navigates to `route`. Flat
+    /// WHOOP styling (FrostedCardSurface, no glow), tokens only. Pushed by VALUE — the first hop off the
+    /// Today root must ride the tab's `NavigationPath` so a re-tap of the Today tab can pop it (#198;
+    /// see TabRoute.swift).
+    private func pinnedCardRow(icon: String, tint: Color, title: String, subtitle: String,
+                               value: String, route: TabRoute) -> some View {
+        NavigationLink(value: route) {
             HStack(spacing: 12) {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(tint.opacity(0.14))
@@ -3279,7 +3274,7 @@ struct TodayView: View {
     private var workoutsSection: some View {
         if !workouts.isEmpty {
             VStack(alignment: .leading, spacing: NoopMetrics.gap) {
-                SectionHeader("Last Workouts", overline: "Activity",
+                SectionHeader("Latest Workouts", overline: "Activity",
                               trailing: String(localized: "\(workouts.count) total"))
                 LazyVGrid(columns: grid, alignment: .leading, spacing: NoopMetrics.gap) {
                     ForEach(Array(workouts.prefix(6).enumerated()), id: \.offset) { _, w in
@@ -4112,6 +4107,25 @@ struct TodayView: View {
         guard let m = d?.totalSleepMin else { return "—" }
         let h = Int(m) / 60, mm = Int(m) % 60
         return String(localized: "\(h)h \(mm)m")
+    }
+
+    /// #110: the Home sleep row's value is `totalSleepMin` — WHOOP's imported TST for the day, which can
+    /// legitimately differ from the Sleep tab's on-device re-staged night (with a WHOOP CSV *and* Apple
+    /// Health both imported). Label the row with its source + which night — the same "Whoop"/"On-device"
+    /// winner logic the Sleep tab's `nightSource` badge uses (`repo.importedSleep` keyed by the row's
+    /// wake-day, exactly as `sleepScoreSource` keys it) — so a WHOOP figure, or an older night at a
+    /// split-sleep / timezone edge, is never silently presented as "last night" with no provenance.
+    /// nil → the row keeps its static description (no banked sleep for the day).
+    private func sleepSourceSubtitle(_ d: DailyMetric?) -> String? {
+        guard let d, d.totalSleepMin != nil else { return nil }
+        let source = repo.importedSleep[d.day] != nil
+            ? String(localized: "Whoop") : String(localized: "On-device")
+        // At offset 0 the row IS last night; a navigated past day names its real date so the label never
+        // over-claims "last night".
+        let night = selectedDayOffset == 0
+            ? String(localized: "last night")
+            : Self.lastChargeDateFmt(d.day)
+        return String(localized: "\(source) · \(night)")
     }
 
     /// The Rest tile's caption, hours-in-bed for the day, the figure that used to be the tile's

@@ -299,8 +299,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The active strap source id (raw streams + imported history live under this). Resolved once at
      *  startup from the device registry (see [NoopApplication.activeDeviceId]); falls back to the
-     *  legacy "my-whoop", so behaviour is unchanged today. */
-    private val deviceId = noopApp.activeDeviceId
+     *  legacy "my-whoop", so behaviour is unchanged today. Public (not private) so the Today screen's
+     *  workout union can follow a re-paired strap's fresh "whoop-<id>" instead of stranding its
+     *  recordings under a read pinned to the literal "my-whoop" (#814 twin of the Workouts screen). */
+    val deviceId = noopApp.activeDeviceId
 
     /** Live connection + biometric snapshot, surfaced straight from the BLE client. */
     val live: StateFlow<LiveState> = ble.state
@@ -360,6 +362,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _batteryAlertsEnabled = MutableStateFlow(NoopPrefs.batteryAlerts(appContext))
     /** Whether strap low/full battery notifications fire. */
     val batteryAlertsEnabled: StateFlow<Boolean> = _batteryAlertsEnabled.asStateFlow()
+
+    // Predictive ~24h-runtime warning: a sub-gate under batteryAlerts (default ON), so the naggier
+    // once-per-discharge-cycle alert can be silenced without losing the 15% safety net.
+    private val _predictiveBatteryAlertsEnabled = MutableStateFlow(NoopPrefs.predictiveBatteryAlerts(appContext))
+    /** Whether the predictive ~24h-runtime warning fires (in addition to batteryAlertsEnabled). */
+    val predictiveBatteryAlertsEnabled: StateFlow<Boolean> = _predictiveBatteryAlertsEnabled.asStateFlow()
 
     // Declared BEFORE the init block for the SAME reason as _illnessWatchEnabled above: the bond
     // collector launched from init runs synchronously on Main.immediate and reads _smartAlarmEnabled on
@@ -1273,6 +1281,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     .getLong(Baselines.hrvBaselineEpochKey, 0L).toDouble(),
                 recoveryEpoch = NoopPrefs.of(appContext)
                     .getLong(Baselines.recoveryBaselineEpochKey, 0L).toDouble(),
+                // #195/#141: keep the HRV window consistent with the 15-min loop — without this a sleep edit
+                // would re-score + persist every night's HRV over the WHOLE night, silently overwriting the
+                // deep-window value (the "deep sleep window changes nothing" bug).
+                deepHrvWindow = UnitPrefs.hrvWindow(appContext) == HrvWindow.DEEP_SLEEP,
                 // Opt-in experimental sleep staging (V2) — same flag the 15-min loop reads, so a manual
                 // re-score after an edit stages with the same engine the user chose. (V7 Pillar 3b)
                 useExperimentalSleepV2 = PuffinExperiment.from(appContext).experimentalSleepV2,
@@ -1511,6 +1523,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         hrWindow.clear()
         _bpm.value = null
     }
+
+    /** Restart the connected strap (user-initiated, confirmation-gated in DevicesScreen). Non-destructive —
+     *  the strap keeps its data and re-advertises after boot; NOOP auto-reconnects. See WhoopBleClient.rebootStrap. */
+    fun rebootStrap() = ble.rebootStrap()
+
+    /** Send one WHOOP 4.0 reboot-probe candidate (Test Centre → Connection, 4.0 only). Confirmation-gated
+     *  in DevicesScreen; finds the real 4.0 reboot frame when the production one is ignored (#235). */
+    fun rebootProbe(variant: com.noop.protocol.RebootProbeVariant) = ble.rebootProbe(variant)
 
     /**
      * Flip the "keep connected in the background" preference (driven by Settings). Turning it on
@@ -1903,6 +1923,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setBatteryAlertsEnabled(enabled: Boolean) {
         _batteryAlertsEnabled.value = enabled
         NoopPrefs.setBatteryAlerts(appContext, enabled)
+    }
+
+    /** Toggle the predictive ~24h-runtime warning on its own; same persist-only mechanics as above. */
+    fun setPredictiveBatteryAlertsEnabled(enabled: Boolean) {
+        _predictiveBatteryAlertsEnabled.value = enabled
+        NoopPrefs.setPredictiveBatteryAlerts(appContext, enabled)
     }
 
     /** Re-evaluate the strap's single firmware-alarm slot from BOTH features that want it (#5).
