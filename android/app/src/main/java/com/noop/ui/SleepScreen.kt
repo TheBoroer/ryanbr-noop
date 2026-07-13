@@ -2113,7 +2113,7 @@ private fun NightNavHeader(
     }
 }
 
-// MARK: - 2. Metric grid (uniform fixed-height tiles, each with a sparkline)
+// MARK: - 2. Metric grid (row-equalized min-height tiles, each with a bottom sparkline)
 
 @Composable
 private fun MetricGrid(m: SleepModel, onMetricClick: (String) -> Unit = {}) {
@@ -2192,10 +2192,14 @@ private fun MetricGrid(m: SleepModel, onMetricClick: (String) -> Unit = {}) {
 
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         SectionHeader("Night detail", overline = "Metrics", trailing = "vs typical")
-        // Two-up rows keep every tile the same fixed height with no empty cells.
+        // Two-up rows; IntrinsicSize.Max + fillMaxHeight keep row neighbors equal height even when
+        // large font scales grow one tile past the tileHeight floor. No empty cells.
         tiles.chunked(2).forEach { rowTiles ->
-            Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap)) {
-                rowTiles.forEach { it(Modifier.weight(1f)) }
+            Row(
+                modifier = Modifier.height(IntrinsicSize.Max),
+                horizontalArrangement = Arrangement.spacedBy(Metrics.gap),
+            ) {
+                rowTiles.forEach { it(Modifier.weight(1f).fillMaxHeight()) }
                 if (rowTiles.size == 1) Spacer(Modifier.weight(1f))
             }
         }
