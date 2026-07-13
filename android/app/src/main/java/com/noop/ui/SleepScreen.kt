@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -2585,7 +2586,7 @@ private fun ChartFooter(items: List<Pair<String, String>>) {
     }
 }
 
-// MARK: - SparkTile (fixed-height metric tile with a trailing 30-day sparkline)
+// MARK: - SparkTile (min-height metric tile, stacked: value + caption over a full-width 30-day sparkline)
 
 @Composable
 private fun SparkTile(
@@ -2601,44 +2602,53 @@ private fun SparkTile(
     // liquidPress on the tappable tile: it settles inward on press (the pilot's card feel). The SAME
     // interactionSource drives the clickable + the press; indication = null so only the liquid settle shows.
     val interaction = remember { MutableInteractionSource() }
+    // heightIn (not height): tileHeight is a floor, matching the Swift StatTile. At normal font scale the
+    // tile keeps its 108dp footprint; at large font scales it grows instead of clipping the caption. (#squish)
     val clickMod = if (onClick != null) {
         modifier
-            .height(Metrics.tileHeight)
+            .heightIn(min = Metrics.tileHeight)
             .liquidPress(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
     } else {
-        modifier.height(Metrics.tileHeight)
+        modifier.heightIn(min = Metrics.tileHeight)
     }
     NoopCard(modifier = clickMod, padding = Metrics.space14) {
-        Column(modifier = Modifier.fillMaxWidth()) {
+        // fillMaxHeight so the weight-spacer can pin the sparkline to the card bottom once the
+        // MetricGrid row bounds the height (Row height(IntrinsicSize.Max) + tile fillMaxHeight()).
+        Column(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
             Overline(label)
+            Text(
+                value,
+                style = NoopType.tileValue,
+                color = accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (caption != null) {
+                Text(
+                    caption,
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                    // Full card width now, so the "-3% vs typical" caption fits; ellipsis stays as a
+                    // safety net for extreme localized strings.
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = Metrics.space2),
+                )
+            }
             Spacer(Modifier.weight(1f))
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        value,
-                        style = NoopType.tileValue,
-                        color = accent,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (caption != null) {
-                        Text(
-                            caption,
-                            style = NoopType.footnote,
-                            color = Palette.textTertiary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = Metrics.space2),
-                        )
-                    }
-                }
-                val tail = spark.takeLast(30)
-                if (tail.size >= 2) {
-                    SparkTailBox {
-                        Sparkline(values = tail, color = sparkColor)
-                    }
-                }
+            val tail = spark.takeLast(30)
+            if (tail.size >= 2) {
+                // Full-width bottom spark. Outer height(sparkHeight) deliberately overrides Sparkline's
+                // internal 28dp default down to the 22dp tile spark (same override SparkTailBox does).
+                Sparkline(
+                    values = tail,
+                    color = sparkColor,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = Metrics.space8)
+                        .height(Metrics.sparkHeight),
+                )
             }
         }
     }
